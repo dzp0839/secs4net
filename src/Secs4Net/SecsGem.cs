@@ -5,13 +5,14 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Threading.Channels;
 
 namespace Secs4Net;
 
 public interface ISecsGem
 {
+    ushort DeviceId { get; }
+
     /// <summary>
     /// Get primary messages from async-stream
     /// </summary>
@@ -45,7 +46,7 @@ public sealed class SecsGem : ISecsGem, IDisposable
             AllowSynchronousContinuations = false,
         });
 
-    private readonly ConcurrentDictionary<int, (string? messageName, ValueTaskCompletionSource<SecsMessage> completeSource)> _replyExpectedMsgs = new();
+    private readonly ConcurrentDictionary<int, (string? messageName, ValueTaskCompletionSource<SecsMessage> completeSource)> _replyExpectedMessages = new();
     private readonly CancellationTokenSource _cancellationSourceForDataMessageProcessing = new();
     private int _recentlyMaxEncodedByteLength;
 
@@ -59,10 +60,14 @@ public sealed class SecsGem : ISecsGem, IDisposable
         _hsmsConnector = hsmsConnector;
         _logger = logger;
 
-        Task.Run(() =>
-            _hsmsConnector.GetDataMessages(_cancellationSourceForDataMessageProcessing.Token)
-                .ForEachAwaitWithCancellationAsync((a, ct) =>
-                    ProcessDataMessageAsync(a.header, a.rootItem, ct), _cancellationSourceForDataMessageProcessing.Token));
+        Task.Run(async () =>
+        {
+            var cancellationToken = _cancellationSourceForDataMessageProcessing.Token;
+            await foreach (var (header, rootItem) in _hsmsConnector.GetDataMessages(cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                await ProcessDataMessageAsync(header, rootItem, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+            }
+        });
     }
 
     internal async Task<SecsMessage> SendDataMessageAsync(SecsMessage message, int id, CancellationToken cancellation)
@@ -75,7 +80,7 @@ public sealed class SecsGem : ISecsGem, IDisposable
         var token = ValueTaskCompletionSource<SecsMessage>.Create();
         if (message.ReplyExpected)
         {
-            _replyExpectedMsgs[id] = (message.Name, token);
+            _replyExpectedMessages[id] = (message.Name, token);
         }
 
         try
@@ -98,7 +103,7 @@ public sealed class SecsGem : ISecsGem, IDisposable
                 return null!;
             }
 
-#if NET6_0
+#if NET
             return await token.Task.WaitAsync(TimeSpan.FromMilliseconds(T3), cancellation).ConfigureAwait(false);
 #else
             if (await Task.WhenAny(token.Task, Task.Delay(T3, cancellation)).ConfigureAwait(false) != token.Task)
@@ -113,7 +118,7 @@ public sealed class SecsGem : ISecsGem, IDisposable
             _hsmsConnector.Reconnect();
             throw;
         }
-#if NET6_0
+#if NET
         catch (TimeoutException)
         {
             _logger.Error($"T3 Timeout[id=0x{id:X8}]: {T3 / 1000} sec.");
@@ -122,7 +127,7 @@ public sealed class SecsGem : ISecsGem, IDisposable
 #endif
         finally
         {
-            _replyExpectedMsgs.TryRemove(id, out _);
+            _replyExpectedMessages.TryRemove(id, out _);
         }
     }
 
@@ -180,7 +185,7 @@ public sealed class SecsGem : ISecsGem, IDisposable
 
             // Secondary message
             _logger.MessageIn(msg, id);
-            if (_replyExpectedMsgs.TryGetValue(id, out var token))
+            if (_replyExpectedMessages.TryGetValue(id, out var token))
             {
                 msg.Name = token.messageName;
                 HandleReplyMessage(token.completeSource, msg);
@@ -209,11 +214,15 @@ public sealed class SecsGem : ISecsGem, IDisposable
 
         _cancellationSourceForDataMessageProcessing.Cancel();
         _cancellationSourceForDataMessageProcessing.Dispose();
-        _replyExpectedMsgs.Clear();
+        _replyExpectedMessages.Clear();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+#if NET 
+    public static void EncodeMessage(SecsMessage msg, int id, ushort deviceId, ArrayPoolBufferWriter<byte> buffer)
+#else
     public static unsafe void EncodeMessage(SecsMessage msg, int id, ushort deviceId, ArrayPoolBufferWriter<byte> buffer)
+#endif
     {
         buffer.GetSpan(14);
         // reserve 4 byte for total length

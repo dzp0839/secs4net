@@ -1,5 +1,4 @@
 ﻿using System.Buffers;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -17,13 +16,13 @@ partial class Item
             : base(format)
             => _value = value;
 
-        public sealed override int Count
+        public override int Count
             => _value.Length;
 
-        public sealed override string GetString()
+        public override string GetString()
             => _value;
 
-        public sealed override void EncodeTo(IBufferWriter<byte> buffer)
+        public override void EncodeTo(IBufferWriter<byte> buffer)
         {
             if (_value.Length == 0)
             {
@@ -31,30 +30,21 @@ partial class Item
                 return;
             }
 
-            var encoder = Format == SecsFormat.ASCII ? Encoding.ASCII : Jis8Encoding;
-            var bytelength = encoder.GetByteCount(_value);
-            EncodeItemHeader(Format, bytelength, buffer);
-            var length = encoder.GetBytes(_value, buffer.GetSpan(bytelength));
-            buffer.Advance(bytelength);
-#if DEBUG
-            Debug.Assert(length == bytelength);
-#endif
+            var encoder = Format == SecsFormat.ASCII ? ASCIIEncoding : JIS8Encoding;
+            var byteLength = encoder.GetByteCount(_value);
+            EncodeItemHeader(Format, byteLength, buffer);
+            var length = encoder.GetBytes(_value, buffer.GetSpan(byteLength));
+            buffer.Advance(byteLength);
+            Debug.Assert(length == byteLength);
         }
 
-        private protected sealed override bool IsEquals(Item other)
+        private protected override bool IsEquals(Item other)
             => Format == other.Format && _value.Equals(other.GetString(), StringComparison.Ordinal);
 
-        private sealed class ItemDebugView
+        private sealed class ItemDebugView(Item.StringItem item)
         {
-            private readonly StringItem _item; 
-
-            public ItemDebugView(StringItem item)
-            {
-                _item = item;
-                EncodedBytes = new EncodedByteDebugView(item);
-            }
-            public string Value => _item._value;
-            public EncodedByteDebugView EncodedBytes { get; }
+            public string Value => item._value;
+            public EncodedByteDebugView EncodedBytes { get; } = new EncodedByteDebugView(item);
         }
     }
 }

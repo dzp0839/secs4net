@@ -1,11 +1,11 @@
 ﻿using CommunityToolkit.HighPerformance;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using static Secs4Net.Item;
@@ -74,18 +74,18 @@ public static class SmlReader
             int j = line.IndexOf('F');
 
 #if NET
-            var s = byte.Parse(line[i..j]);
+            var s = byte.Parse(line[i..j], provider: CultureInfo.InvariantCulture);
 #else
-            var s = byte.Parse(line[i..j].ToString());
+            var s = byte.Parse(line[i..j].ToString(), CultureInfo.InvariantCulture);
 #endif
 
             line = line[(j + 1)..];
             i = line.IndexOf('\'');
 
 #if NET
-            var f = byte.Parse(line[0..i]);
+            var f = byte.Parse(line[0..i], provider: CultureInfo.InvariantCulture);
 #else
-            var f = byte.Parse(line[0..i].ToString());
+            var f = byte.Parse(line[0..i].ToString(), CultureInfo.InvariantCulture);
 #endif
 
             var replyExpected = line[i..].IndexOf('W') != -1;
@@ -116,18 +116,18 @@ public static class SmlReader
         int j = line.IndexOf('F');
 
 #if NET
-        var s = byte.Parse(line[i..j]);
+        var s = byte.Parse(line[i..j], provider: CultureInfo.InvariantCulture);
 #else
-        var s = byte.Parse(line[i..j].ToString());
+        var s = byte.Parse(line[i..j].ToString(), CultureInfo.InvariantCulture);
 #endif
 
         line = line[(j + 1)..];
         i = line.IndexOf('\'');
 
 #if NET
-        var f = byte.Parse(line[0..i]);
+        var f = byte.Parse(line[0..i], provider: CultureInfo.InvariantCulture);
 #else
-        var f = byte.Parse(line[0..i].ToString());
+        var f = byte.Parse(line[0..i].ToString(), CultureInfo.InvariantCulture);
 #endif
 
         var replyExpected = line[i..].IndexOf('W') != -1;
@@ -152,12 +152,12 @@ public static class SmlReader
     {
         line = line.TrimStart();
 
-        if (line.DangerousGetReferenceAt(0) == '.')
+        if (line.DangerousGetReference() is '.')
         {
             return false;
         }
 
-        if (line.DangerousGetReferenceAt(0) == '>')
+        if (line.DangerousGetReference() is '>')
         {
             var itemList = stack.Pop();
             var item = itemList.Count > 0 ? L(itemList) : L();
@@ -176,21 +176,16 @@ public static class SmlReader
         // <format[count] smlValue
 
         int indexItemL = line.IndexOf('<') + 1;
-#if DEBUG
         Debug.Assert(indexItemL != 0);
-#endif
+
         int indexSizeL = line[indexItemL..].IndexOf('[') + indexItemL;
-#if DEBUG
         Debug.Assert(indexSizeL != -1);
-#endif
 
         var format = line[indexItemL..indexSizeL].Trim();
 
 
         int indexSizeR = line[indexSizeL..].IndexOf(']') + indexSizeL;
-#if DEBUG
         Debug.Assert(indexSizeR != -1);
-#endif
 
 #if NET
         int? size = int.TryParse(line[(indexSizeL + 1)..indexSizeR], out var s) ? s : null;
@@ -205,9 +200,8 @@ public static class SmlReader
         else
         {
             int indexItemR = line.LastIndexOf('>');
-#if DEBUG
             Debug.Assert(indexItemR != -1);
-#endif
+
             var valueStr = line.Slice(indexSizeR + 1, indexItemR - indexSizeR - 1);
             var item = Create(ParseFormat(format), valueStr, size);
             if (stack.Count > 0)
@@ -226,44 +220,44 @@ public static class SmlReader
     private static byte HexByteParser(ReadOnlySpan<char> str)
 #if NET
         => str.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
-        ? byte.Parse(str[2..], NumberStyles.HexNumber)
-        : byte.Parse(str);
+        ? byte.Parse(str[2..], NumberStyles.HexNumber, provider: CultureInfo.InvariantCulture)
+        : byte.Parse(str, provider: CultureInfo.InvariantCulture);
 #else
         => str.StartsWith("0x".AsSpan(), StringComparison.OrdinalIgnoreCase)
-        ? byte.Parse(str[2..].ToString(), NumberStyles.HexNumber)
-        : byte.Parse(str.ToString());
+        ? byte.Parse(str[2..].ToString(), NumberStyles.HexNumber, CultureInfo.InvariantCulture)
+        : byte.Parse(str.ToString(), CultureInfo.InvariantCulture);
 #endif
 
     private static readonly (Func<Item>, Func<byte[], Item>, SpanParser<byte>) BinaryParser = (B, B, HexByteParser);
 #if NET
-    private static readonly (Func<Item>, Func<sbyte[], Item>, SpanParser<sbyte>) I1Parser = (I1, I1, static span => sbyte.Parse(span));
-    private static readonly (Func<Item>, Func<short[], Item>, SpanParser<short>) I2Parser = (I2, I2, static span => short.Parse(span));
-    private static readonly (Func<Item>, Func<int[], Item>, SpanParser<int>) I4Parser = (I4, I4, static span => int.Parse(span));
-    private static readonly (Func<Item>, Func<long[], Item>, SpanParser<long>) I8Parser = (I8, I8, static span => long.Parse(span));
-    private static readonly (Func<Item>, Func<byte[], Item>, SpanParser<byte>) U1Parser = (U1, U1, static span => byte.Parse(span));
-    private static readonly (Func<Item>, Func<ushort[], Item>, SpanParser<ushort>) U2Parser = (U2, U2, static span => ushort.Parse(span));
-    private static readonly (Func<Item>, Func<uint[], Item>, SpanParser<uint>) U4Parser = (U4, U4, static span => uint.Parse(span));
-    private static readonly (Func<Item>, Func<ulong[], Item>, SpanParser<ulong>) U8Parser = (U8, U8, static span => ulong.Parse(span));
-    private static readonly (Func<Item>, Func<float[], Item>, SpanParser<float>) F4Parser = (F4, F4, static span => float.Parse(span));
-    private static readonly (Func<Item>, Func<double[], Item>, SpanParser<double>) F8Parser = (F8, F8, static span => double.Parse(span));
+    private static readonly (Func<Item>, Func<sbyte[], Item>, SpanParser<sbyte>) I1Parser = (I1, I1, static span => sbyte.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<short[], Item>, SpanParser<short>) I2Parser = (I2, I2, static span => short.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<int[], Item>, SpanParser<int>) I4Parser = (I4, I4, static span => int.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<long[], Item>, SpanParser<long>) I8Parser = (I8, I8, static span => long.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<byte[], Item>, SpanParser<byte>) U1Parser = (U1, U1, static span => byte.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<ushort[], Item>, SpanParser<ushort>) U2Parser = (U2, U2, static span => ushort.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<uint[], Item>, SpanParser<uint>) U4Parser = (U4, U4, static span => uint.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<ulong[], Item>, SpanParser<ulong>) U8Parser = (U8, U8, static span => ulong.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<float[], Item>, SpanParser<float>) F4Parser = (F4, F4, static span => float.Parse(span, provider: CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<double[], Item>, SpanParser<double>) F8Parser = (F8, F8, static span => double.Parse(span, provider: CultureInfo.InvariantCulture));
     private static readonly (Func<Item>, Func<bool[], Item>, SpanParser<bool>) BoolParser = (Boolean, Boolean, bool.Parse);
 #else
-    private static readonly (Func<Item>, Func<sbyte[], Item>, SpanParser<sbyte>) I1Parser = (I1, I1, static span => sbyte.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<short[], Item>, SpanParser<short>) I2Parser = (I2, I2, static span => short.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<int[], Item>, SpanParser<int>) I4Parser = (I4, I4, static span => int.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<long[], Item>, SpanParser<long>) I8Parser = (I8, I8, static span => long.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<byte[], Item>, SpanParser<byte>) U1Parser = (U1, U1, static span => byte.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<ushort[], Item>, SpanParser<ushort>) U2Parser = (U2, U2, static span => ushort.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<uint[], Item>, SpanParser<uint>) U4Parser = (U4, U4, static span => uint.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<ulong[], Item>, SpanParser<ulong>) U8Parser = (U8, U8, static span => ulong.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<float[], Item>, SpanParser<float>) F4Parser = (F4, F4, static span => float.Parse(span.ToString()));
-    private static readonly (Func<Item>, Func<double[], Item>, SpanParser<double>) F8Parser = (F8, F8, static span => double.Parse(span.ToString()));
+    private static readonly (Func<Item>, Func<sbyte[], Item>, SpanParser<sbyte>) I1Parser = (I1, I1, static span => sbyte.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<short[], Item>, SpanParser<short>) I2Parser = (I2, I2, static span => short.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<int[], Item>, SpanParser<int>) I4Parser = (I4, I4, static span => int.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<long[], Item>, SpanParser<long>) I8Parser = (I8, I8, static span => long.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<byte[], Item>, SpanParser<byte>) U1Parser = (U1, U1, static span => byte.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<ushort[], Item>, SpanParser<ushort>) U2Parser = (U2, U2, static span => ushort.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<uint[], Item>, SpanParser<uint>) U4Parser = (U4, U4, static span => uint.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<ulong[], Item>, SpanParser<ulong>) U8Parser = (U8, U8, static span => ulong.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<float[], Item>, SpanParser<float>) F4Parser = (F4, F4, static span => float.Parse(span.ToString(), CultureInfo.InvariantCulture));
+    private static readonly (Func<Item>, Func<double[], Item>, SpanParser<double>) F8Parser = (F8, F8, static span => double.Parse(span.ToString(), CultureInfo.InvariantCulture));
     private static readonly (Func<Item>, Func<bool[], Item>, SpanParser<bool>) BoolParser = (Boolean, Boolean, static span => bool.Parse(span.ToString()));
 #endif
     private static readonly (Func<Item>, Func<string, Item>) AParser = (A, A);
     private static readonly (Func<Item>, Func<string, Item>) JParser = (J, J);
 
-    private static readonly char[] trimElement = new char[] { ' ', '\'', '"' };
+    private static readonly char[] trimElement = [' ', '\'', '"'];
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static SecsFormat ParseFormat(ReadOnlySpan<char> format)
@@ -288,7 +282,7 @@ public static class SmlReader
             _ => ThrowHelper(format),
         };
 
-#if NET6_0
+#if NET
         [DoesNotReturn]
         static SecsFormat ThrowHelper(ReadOnlySpan<char> format) => throw new SecsException($"Unknown SML format: {format}");
 #else
@@ -320,7 +314,24 @@ public static class SmlReader
             _ => ThrowHelper("Unknown SML format: " + format),
         };
 
-        static Item ParseArrayItem<T>(ReadOnlySpan<char> str, (Func<Item> emptyCreator, Func<T[], Item> creator, SpanParser<T> converter) parser, int? size)
+#if NET8_0
+        //static Item ParseMemoryItem<T>(ReadOnlySpan<char> str, (Func<Item> emptyCreator, Func<T[], Item> creator) parser, int? size)
+        //    where T : unmanaged
+
+        //    , ISpanParsable<T>
+        //{
+        //    var s = SearchValues.Create(" ");
+        //    str.IndexOf()
+        //    var range = new Range[09];
+        //    str.Split(range, ' ');
+        //    var valueStrs = str.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        //    return valueStrs.IsEmpty()
+        //        ? parser.emptyCreator()
+        //        : parser.creator(valueStrs.ToArray(parser.converter, size));
+        //}
+#endif
+
+        static Item ParseArrayItem<T>(ReadOnlySpan<char> str, (Func<Item> emptyCreator, Func<T[], Item> creator, SpanParser<T> converter) parser, int? size) where T : unmanaged
         {
             var valueStrs = str.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             return valueStrs.IsEmpty()

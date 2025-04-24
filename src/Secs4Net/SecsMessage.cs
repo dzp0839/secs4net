@@ -2,7 +2,7 @@
 
 public sealed class SecsMessage : IDisposable
 {
-    public sealed override string ToString() => $"'S{S}F{F}' {(ReplyExpected ? "W" : string.Empty)} {Name ?? string.Empty}";
+    public override string ToString() => $"'S{S}F{F}' {(ReplyExpected ? "W" : string.Empty)} {Name ?? string.Empty}";
 
     /// <summary>
     /// message stream number
@@ -24,7 +24,7 @@ public sealed class SecsMessage : IDisposable
     /// <summary>
     /// the root item of message
     /// </summary>
-    public Item? SecsItem { get; init; }
+    public Item? SecsItem { get; set; }
 
     /// <summary>
     /// constructor of SecsMessage

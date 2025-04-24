@@ -1,6 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace Secs4Net.Extensions;
 
@@ -35,14 +34,23 @@ public static class SecsExtension
 
 #if NET
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static unsafe Span<byte> AsBytes<T>(this ref T value) where T : unmanaged
-        => MemoryMarshal.CreateSpan(ref Unsafe.As<T, byte>(ref value), sizeof(T));
+    internal static unsafe Span<byte> AsBytes<T>(this scoped ref T value) where T : unmanaged
+       => MemoryMarshal.CreateSpan(ref Unsafe.As<T, byte>(ref value), sizeof(T));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static unsafe ReadOnlySpan<byte> AsReadOnlyBytes<T>(this scoped ref T value) where T : unmanaged
+        => MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, byte>(ref value), sizeof(T));
 #else
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static unsafe Span<byte> AsBytes<T>(this ref T value) where T : unmanaged
+    internal static unsafe Span<byte> AsBytes<T>(this scoped ref T value) where T : unmanaged
+        => new(Unsafe.AsPointer(ref value), sizeof(T));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static unsafe ReadOnlySpan<byte> AsReadOnlyBytes<T>(this scoped ref T value) where T : unmanaged
         => new(Unsafe.AsPointer(ref value), sizeof(T));
 #endif
 
+#if !NET
     internal static async Task WithCancellation(this Task task, CancellationToken cancellationToken)
     {
         var tcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -78,4 +86,5 @@ public static class SecsExtension
             return await task.ConfigureAwait(false);
         }
     }
+#endif
 }

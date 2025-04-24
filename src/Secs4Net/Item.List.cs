@@ -1,5 +1,4 @@
 ﻿using System.Buffers;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace Secs4Net;
@@ -12,31 +11,31 @@ partial class Item
     {
         private readonly Item[] _value;
 
-        internal ListItem(SecsFormat format, Item[] value)
-            : base(format)
+        internal ListItem(Item[] value)
+            : base(SecsFormat.List)
             => _value = value;
 
-        public sealed override void Dispose()
+        public override void Dispose()
         {
-            foreach (var a in _value)
+            foreach (ref readonly var a in _value.AsSpan())
             {
                 a.Dispose();
             }
         }
 
-        public sealed override int Count => _value.Length;
+        public override int Count => _value.Length;
 
-        public sealed override Item this[int index]
+        public override Item this[int index]
         {
             get => _value[index];
             set => _value[index] = value;
         }
 
-        public sealed override Item[] Items => _value;
+        public override Item[] Items => _value;
 
-        public sealed override void EncodeTo(IBufferWriter<byte> buffer)
+        public override void EncodeTo(IBufferWriter<byte> buffer)
         {
-            var arr = _value;
+            var arr = _value.AsSpan();
             if (arr.Length == 0)
             {
                 EncodeEmptyItem(Format, buffer);
@@ -44,14 +43,14 @@ partial class Item
             }
 
             EncodeItemHeader(Format, arr.Length, buffer);
-            foreach (var item in arr)
+            foreach (ref readonly var item in arr)
             {
                 item.EncodeTo(buffer);
             }
         }
 
-        private protected sealed override bool IsEquals(Item other)
-            => Format == other.Format && IsListEquals(_value, Unsafe.As<ListItem>(other)!._value);
+        private protected override bool IsEquals(Item other)
+            => Format == other.Format && IsListEquals(_value, Unsafe.As<ListItem>(other)._value);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static bool IsListEquals(Item[] listLeft, Item[] listRight)
@@ -72,19 +71,13 @@ partial class Item
             return true;
         }
 
-        private sealed class ItemDebugView
+        private sealed class ItemDebugView(ListItem item)
         {
-            private readonly ListItem _item;
-            public ItemDebugView(ListItem item)
-            {
-                _item = item;
-                EncodedBytes = new EncodedByteDebugView(item);
-            }
 
             [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-            public Item[] Items => _item._value;
+            public Item[] Items => item._value;
 
-            public EncodedByteDebugView EncodedBytes { get; }
+            public EncodedByteDebugView EncodedBytes { get; } = new EncodedByteDebugView(item);
         }
     }
 }

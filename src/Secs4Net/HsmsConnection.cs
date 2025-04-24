@@ -1,10 +1,8 @@
 ﻿using CommunityToolkit.HighPerformance.Buffers;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using PooledAwait;
 using System.Buffers;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net;
 using System.Net.Sockets;
@@ -16,7 +14,7 @@ namespace Secs4Net;
 #if NET
 [UnsupportedOSPlatform("browser")]
 #endif
-public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncDisposable
+public sealed class HsmsConnection : ISecsConnection, IAsyncDisposable
 {
     public event EventHandler<ConnectionState>? ConnectionChanged;
     public int T5 { get; }
@@ -72,7 +70,7 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
     private readonly Timer _timerLinkTest;
     private readonly ConcurrentDictionary<int, ValueTaskCompletionSource<MessageType>> _replyExpectedMsgs = new();
     private readonly int _socketReceiveBufferSize;
-#if NETSTANDARD
+#if !NET
     private readonly byte[] _socketReceiveBuffer;
 #endif
     private readonly ISecsGemLogger _logger;
@@ -100,7 +98,7 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
         Port = options.Port;
         IsActive = options.IsActive;
         _socketReceiveBufferSize = options.SocketReceiveBufferSize;
-#if NETSTANDARD
+#if !NET
         _socketReceiveBuffer = new byte[_socketReceiveBufferSize];
 #endif
 
@@ -195,7 +193,7 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
                     CommunicationStateChanging(ConnectionState.Connecting);
                     try
                     {
-#if NET6_0
+#if NET
                         _socket = await server.AcceptAsync(cancellation).ConfigureAwait(false);
 #else
                         _socket = await server.AcceptAsync().WithCancellation(cancellation).ConfigureAwait(false);
@@ -244,15 +242,11 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
         _socket = null;
     }
 
-    protected sealed override Task ExecuteAsync(CancellationToken stoppingToken)
+    public void Start(CancellationToken cancellation)
     {
-        _stoppingToken = stoppingToken;
-        Start(_stoppingToken);
-        return Task.CompletedTask;
+        _stoppingToken = cancellation;
+        Task.Run(() => _startImpl(cancellation), cancellation);
     }
-
-    private void Start(CancellationToken cancellation)
-        => Task.Run(() => _startImpl(cancellation), cancellation);
 
     private async Task StartPipeDecoderConsumerAsync(CancellationToken cancellation)
     {
@@ -279,18 +273,24 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
         {
             while (true)
             {
-#if DEBUG
                 Debug.Assert(_socket != null);
-#endif
 #if NET
                 var memory = decoderInput.GetMemory(_socketReceiveBufferSize);
                 var count = await _socket!.ReceiveAsync(memory, SocketFlags.None, cancellation).ConfigureAwait(false);
                 decoderInput.Advance(count);
                 await decoderInput.FlushAsync(cancellation).ConfigureAwait(false);
 #else
-                var count = await _socket!.ReceiveAsync(new ArraySegment<byte>(_socketReceiveBuffer), SocketFlags.None).WithCancellation(cancellation).ConfigureAwait(false); ;
-                await decoderInput.WriteAsync(_socketReceiveBuffer.AsMemory()[..count], cancellation).ConfigureAwait(false);
+                var count = await _socket!.ReceiveAsync(new ArraySegment<byte>(_socketReceiveBuffer), SocketFlags.None).WithCancellation(cancellation).ConfigureAwait(false);
+                if (count > 0)
+                {
+                    await decoderInput.WriteAsync(_socketReceiveBuffer.AsMemory()[..count], cancellation).ConfigureAwait(false);
+                }
 #endif
+                if (count == 0)
+                {
+                    Reconnect();
+                    break;
+                }
             }
         }
         catch (Exception ex)
@@ -358,8 +358,10 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
     {
         try
         {
-            await _pipeDecoder.GetControlMessages(cancellation)
-                .ForEachAwaitWithCancellationAsync(ProcessControlMessageAsync, cancellation).ConfigureAwait(false);
+            await foreach (var item in _pipeDecoder.GetControlMessages(cancellation).WithCancellation(cancellation).ConfigureAwait(false))
+            {
+                await ProcessControlMessageAsync(item, cancellation).ConfigureAwait(continueOnCapturedContext: false);
+            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
     }
@@ -411,7 +413,7 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
                 case MessageType.LinkTestRequest:
                     await SendControlMessage(MessageType.LinkTestResponse, header.Id, cancellation).ConfigureAwait(false);
                     break;
-                case MessageType.SeperateRequest:
+                case MessageType.SeparateRequest:
                     CommunicationStateChanging(ConnectionState.Retry);
                     break;
             }
@@ -426,7 +428,7 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
     private async Task SendControlMessage(MessageType msgType, int id, CancellationToken cancellation = default)
     {
         var token = ValueTaskCompletionSource<MessageType>.Create();
-        if ((byte)msgType % 2 == 1 && msgType != MessageType.SeperateRequest)
+        if ((byte)msgType % 2 == 1 && msgType != MessageType.SeparateRequest)
         {
             _replyExpectedMsgs[id] = token;
         }
@@ -434,12 +436,12 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
         try
         {
             var buffer = EncodeControlMessage(msgType, id);
-            await Unsafe.As<ISecsConnection>(this)!.SendAsync(buffer, cancellation).ConfigureAwait(false);
+            await Unsafe.As<ISecsConnection>(this).SendAsync(buffer, cancellation).ConfigureAwait(false);
 
             _logger.Info("Sent Control Message: " + msgType);
             if (_replyExpectedMsgs.ContainsKey(id))
             {
-#if NET6_0
+#if NET
                 await token.Task.WaitAsync(TimeSpan.FromMilliseconds(T6), cancellation).ConfigureAwait(false);
 #else
                 if (await Task.WhenAny(token.Task, Task.Delay(T6, cancellation)).ConfigureAwait(false) != token.Task)
@@ -450,7 +452,7 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
 #endif
             }
         }
-#if NET6_0
+#if NET
         catch (TimeoutException)
         {
             _logger.Error($"T6 Timeout[id=0x{id:X8}]: {T6 / 1000} sec.");
@@ -503,7 +505,7 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
         ConnectionChanged = null;
         if (State == ConnectionState.Selected)
         {
-            await SendControlMessage(MessageType.SeperateRequest, MessageIdGenerator.NewId()).ConfigureAwait(false);
+            await SendControlMessage(MessageType.SeparateRequest, MessageIdGenerator.NewId()).ConfigureAwait(false);
         }
 
         Disconnect();
@@ -525,11 +527,9 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
         {
             do
             {
-#if DEBUG
                 Debug.Assert(_socket != null);
-#endif
-                var length = await _socket!.SendAsync(buffer, SocketFlags.None, cancellation).ConfigureAwait(false);
-                //Trace.WriteLine($"Socket sent {length} bytes.");
+                var length = await _socket.SendAsync(buffer, SocketFlags.None, cancellation).ConfigureAwait(false);
+                Debug.WriteLine($"Socket sent {length} bytes.");
                 buffer = buffer[length..];
             } while (!buffer.IsEmpty);
         }
@@ -550,12 +550,10 @@ public sealed class HsmsConnection : BackgroundService, ISecsConnection, IAsyncD
         {
             do
             {
-#if DEBUG
                 Debug.Assert(_socket != null);
-#endif
-                var length = await _socket!.SendAsync(arr, SocketFlags.None).WithCancellation(cancellation).ConfigureAwait(false);
+                var length = await _socket.SendAsync(arr, SocketFlags.None).WithCancellation(cancellation).ConfigureAwait(false);
                 arr = new ArraySegment<byte>(arr.Array, arr.Offset + length, arr.Count - length);
-                //Trace.WriteLine($"Socket sent {length} bytes.");
+                Debug.WriteLine($"Socket sent {length} bytes.");
             } while (arr.Count > 0);
         }
         finally

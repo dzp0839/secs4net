@@ -1,8 +1,6 @@
-﻿using CommunityToolkit.HighPerformance;
-using System.Buffers;
+﻿using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace Secs4Net;
 
@@ -21,28 +19,29 @@ public readonly record struct MessageHeader
     {
         var span = buffer.GetSpan(sizeHint: 10);
         BinaryPrimitives.WriteUInt16BigEndian(span, DeviceId);
-        span.DangerousGetReferenceAt(2) = (byte)(S | (ReplyExpected ? 0b1000_0000 : 0));
-        span.DangerousGetReferenceAt(3) = F;
-        span.DangerousGetReferenceAt(4) = (byte)0;
-        span.DangerousGetReferenceAt(5) = (byte)MessageType;
+        ref var r0 = ref MemoryMarshal.GetReference(span);
+        Unsafe.Add(ref r0, 2u) = (byte)(S | (ReplyExpected ? 0b1000_0000 : 0));
+        Unsafe.Add(ref r0, 3u) = F;
+        Unsafe.Add(ref r0, 4u) = 0;
+        Unsafe.Add(ref r0, 5u) = (byte)MessageType;
         BinaryPrimitives.WriteInt32BigEndian(span[6..], Id);
         buffer.Advance(10);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     [SkipLocalsInit]
-    internal static void Decode(ReadOnlySpan<byte> buffer, out MessageHeader header)
+    internal static void Decode(ReadOnlySpan<byte> span, out MessageHeader header)
     {
-        ref var head = ref MemoryMarshal.GetReference(buffer);
-        var s = Unsafe.Add(ref head, 2);
+        ref var r0 = ref MemoryMarshal.GetReference(span);
+        var s = Unsafe.Add(ref r0, 2u);
         header = new MessageHeader
         {
-            DeviceId = BinaryPrimitives.ReadUInt16BigEndian(buffer),
+            DeviceId = (ushort)(BinaryPrimitives.ReadUInt16BigEndian(span) & 0b01111111_11111111),
             ReplyExpected = (s & 0b1000_0000) != 0,
-            S = (byte)(s & 0b0111_111),
-            F = Unsafe.Add(ref head, 3),
-            MessageType = (MessageType)Unsafe.Add(ref head, 5),
-            Id = BinaryPrimitives.ReadInt32BigEndian(buffer[6..]),
+            S = (byte)(s & 0b0111_1111),
+            F = Unsafe.Add(ref r0, 3u),
+            MessageType = (MessageType)Unsafe.Add(ref r0, 5u),
+            Id = BinaryPrimitives.ReadInt32BigEndian(span[6..]),
         };
     }
 }

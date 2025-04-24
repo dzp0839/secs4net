@@ -1,9 +1,7 @@
 ﻿using CommunityToolkit.HighPerformance;
 using System.Buffers;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace Secs4Net;
 
@@ -29,7 +27,7 @@ public partial class Item
                 ThrowHelper();
             }
 
-            return ref Unsafe.As<T, TResult>(ref span.DangerousGetReferenceAt(0));
+            return ref Unsafe.As<T, TResult>(ref MemoryMarshal.GetReference(span));
 
             [DoesNotReturn]
             static void ThrowHelper() => throw new IndexOutOfRangeException($"The item is empty or data length less than sizeof({typeof(T).Name})");
@@ -43,7 +41,7 @@ public partial class Item
                 return defaultValue;
             }
 
-            return Unsafe.As<T, TResult>(ref span.DangerousGetReferenceAt(0));
+            return Unsafe.As<T, TResult>(ref MemoryMarshal.GetReference(span));
         }
 
         public sealed override Memory<TResult> GetMemory<TResult>()
@@ -51,14 +49,14 @@ public partial class Item
 
         public sealed override unsafe void EncodeTo(IBufferWriter<byte> buffer)
         {
-            var memory = _value;
-            if (memory.IsEmpty)
+            var value = _value;
+            if (value.IsEmpty)
             {
                 EncodeEmptyItem(Format, buffer);
                 return;
             }
 
-            var valueByteSpan = memory.Span.AsBytes();
+            var valueByteSpan = MemoryMarshal.AsBytes(value.Span);
             var byteLength = valueByteSpan.Length;
 
             EncodeItemHeader(Format, byteLength, buffer);
@@ -70,28 +68,22 @@ public partial class Item
 
 #if NET
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            static unsafe Span<T> Cast(Span<byte> bytes)
+            static Span<T> Cast(Span<byte> bytes)
                 => MemoryMarshal.CreateSpan(ref Unsafe.As<byte, T>(ref MemoryMarshal.GetReference(bytes)), bytes.Length / sizeof(T));
 #else
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            static unsafe Span<T> Cast(Span<byte> bytes)
+            static Span<T> Cast(Span<byte> bytes)
                 => new(Unsafe.AsPointer(ref MemoryMarshal.GetReference(bytes)), bytes.Length / sizeof(T));
 #endif
         }
 
         private protected sealed override bool IsEquals(Item other)
-            => Format == other.Format && _value.Span.SequenceEqual(Unsafe.As<MemoryItem<T>>(other)!._value.Span);
+            => Format == other.Format && _value.Span.SequenceEqual(Unsafe.As<MemoryItem<T>>(other)._value.Span);
 
-        private sealed class ItemDebugView
+        private sealed class ItemDebugView(MemoryItem<T> item)
         {
-            private readonly MemoryItem<T> _item;
-            public ItemDebugView(MemoryItem<T> item)
-            {
-                _item = item;
-                EncodedBytes = new EncodedByteDebugView(item);
-            }
-            public Span<T> Value => _item._value.Span;
-            public EncodedByteDebugView EncodedBytes { get; }
+            public Span<T> Value => item._value.Span;
+            public EncodedByteDebugView EncodedBytes { get; } = new EncodedByteDebugView(item);
         }
     }
 }

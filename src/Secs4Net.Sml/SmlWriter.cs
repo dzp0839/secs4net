@@ -1,22 +1,21 @@
-﻿using CommunityToolkit.HighPerformance;
-using CommunityToolkit.HighPerformance.Buffers;
+﻿using CommunityToolkit.HighPerformance.Buffers;
 using System;
-using System.Buffers.Binary;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace Secs4Net.Sml;
 
 public static class SmlWriter
 {
-    public static int SmlIndent = 4;
+    public static int SmlIndent { get; set; } = 4;
 
     public static string ToSml(this SecsMessage msg)
     {
-        using var sw = new StringWriter();
+        using var sw = new StringWriter(CultureInfo.InvariantCulture);
         msg.WriteSmlTo(sw);
         return sw.ToString();
     }
@@ -28,11 +27,7 @@ public static class SmlWriter
             writer.Write(msg.Name);
             writer.Write(':');
         }
-        writer.Write("'S");
-        writer.Write(msg.S);
-        writer.Write('F');
-        writer.Write(msg.F);
-        writer.Write('\'');
+        writer.Write(FormattableString.Invariant($"'S{msg.S}F{msg.F}'"));
         if (msg.ReplyExpected)
         {
             writer.Write('W');
@@ -51,19 +46,15 @@ public static class SmlWriter
     {
         if (msg.Name is not null)
         {
-            writer.Write(msg.Name);
-            writer.Write(':');
+            await writer.WriteAsync(msg.Name).ConfigureAwait(false);
+            await writer.WriteAsync(':').ConfigureAwait(false);
         }
-        writer.Write("'S");
-        writer.Write(msg.S);
-        writer.Write('F');
-        writer.Write(msg.F);
-        writer.Write('\'');
+        await writer.WriteAsync(FormattableString.Invariant($"'S{msg.S}F{msg.F}'")).ConfigureAwait(false);
         if (msg.ReplyExpected)
         {
-            writer.Write('W');
+            await writer.WriteAsync('W').ConfigureAwait(false);
         }
-        writer.WriteLine();
+        await writer.WriteLineAsync().ConfigureAwait(false);
 
         if (msg.SecsItem is not null)
         {
@@ -77,11 +68,7 @@ public static class SmlWriter
     {
         var indentStr = new string(' ', indent);
         writer.Write(indentStr);
-        writer.Write('<');
-        writer.Write(item.Format.ToSml());
-        writer.Write(" [");
-        writer.Write(item.Count);
-        writer.Write("] ");
+        writer.Write(FormattableString.Invariant($"<{item.Format.ToSml()} [{item.Count}] "));
         switch (item.Format)
         {
             case SecsFormat.List:
@@ -144,17 +131,17 @@ public static class SmlWriter
     {
         var indentStr = new string(' ', indent);
         await writer.WriteAsync(indentStr).ConfigureAwait(false);
-        await writer.WriteAsync($"<{item.Format.ToSml()} [{item.Count}] ").ConfigureAwait(false);
+        await writer.WriteAsync(FormattableString.Invariant($"<{item.Format.ToSml()} [{item.Count}] ")).ConfigureAwait(false);
         switch (item.Format)
         {
             case SecsFormat.List:
-                await WriteListAsnc(writer, item, indent, indentStr).ConfigureAwait(false);
+                await WriteListAsync(writer, item, indent, indentStr).ConfigureAwait(false);
                 break;
             case SecsFormat.ASCII:
             case SecsFormat.JIS8:
-                writer.Write('\'');
-                writer.Write(item.GetString());
-                writer.Write('\'');
+                await writer.WriteAsync('\'').ConfigureAwait(false);
+                await writer.WriteAsync(item.GetString()).ConfigureAwait(false);
+                await writer.WriteAsync('\'').ConfigureAwait(false);
                 break;
             case SecsFormat.Binary:
                 writer.WriteHexArray(item.GetMemory<byte>());
@@ -198,7 +185,7 @@ public static class SmlWriter
 
         await writer.WriteLineAsync('>').ConfigureAwait(false);
 
-        static async Task WriteListAsnc(TextWriter writer, Item item, int indent, string indentStr)
+        static async Task WriteListAsync(TextWriter writer, Item item, int indent, string indentStr)
         {
             await writer.WriteLineAsync().ConfigureAwait(false);
             foreach (var a in item.Items)
@@ -212,10 +199,10 @@ public static class SmlWriter
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void WriteArray<T>(this TextWriter writer, Memory<T> memory)
-#if NET6_0
+#if NET
             where T : unmanaged, ISpanFormattable
 #else
-            where T: unmanaged
+            where T : unmanaged, IConvertible
 #endif
     {
         if (memory.IsEmpty)
@@ -224,22 +211,22 @@ public static class SmlWriter
         }
 
         var array = memory.Span;
-        ref var rStart = ref array.DangerousGetReferenceAt(0);
-        ref var rEnd = ref array.DangerousGetReferenceAt(array.Length - 1);
+        ref var rStart = ref MemoryMarshal.GetReference(array);
+        ref var rEnd = ref Unsafe.Add(ref rStart, array.Length - 1);
         while (Unsafe.IsAddressLessThan(ref rStart, ref rEnd))
         {
             WriteValue(writer, rStart);
             writer.Write(' ');
-            rStart = ref Unsafe.Add(ref rStart, 1);
+            rStart = ref Unsafe.Add(ref rStart, 1u);
         }
         WriteValue(writer, rStart);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static void WriteValue(TextWriter writer, T value)
-#if NET6_0
+#if NET
                 => writer.WriteSpanFormattableValue(value);
 #else
-                => writer.Write(value.ToString());
+                => writer.Write(value.ToString(CultureInfo.InvariantCulture));
 #endif
     }
 
@@ -252,13 +239,13 @@ public static class SmlWriter
         }
 
         var array = memory.Span;
-        ref var rStart = ref array.DangerousGetReferenceAt(0);
-        ref var rEnd = ref array.DangerousGetReferenceAt(array.Length - 1);
+        ref var rStart = ref MemoryMarshal.GetReference(array);
+        ref var rEnd = ref Unsafe.Add(ref rStart, array.Length - 1);
         while (Unsafe.IsAddressLessThan(ref rStart, ref rEnd))
         {
             WriteValue(writer, rStart);
             writer.Write(' ');
-            rStart = ref Unsafe.Add(ref rStart, 1);
+            rStart = ref Unsafe.Add(ref rStart, 1u);
         }
         WriteValue(writer, rStart);
 
@@ -280,13 +267,13 @@ public static class SmlWriter
         }
 
         var array = memory.Span;
-        ref var rStart = ref array.DangerousGetReferenceAt(0);
-        ref var rEnd = ref array.DangerousGetReferenceAt(array.Length - 1);
+        ref var rStart = ref MemoryMarshal.GetReference(array);
+        ref var rEnd = ref Unsafe.Add(ref rStart, array.Length - 1);
         while (Unsafe.IsAddressLessThan(ref rStart, ref rEnd))
         {
             writer.Write(rStart.ToString());
             writer.Write(' ');
-            rStart = ref Unsafe.Add(ref rStart, 1);
+            rStart = ref Unsafe.Add(ref rStart, 1u);
         }
         writer.Write(rStart.ToString());
     }
@@ -300,13 +287,13 @@ public static class SmlWriter
         }
 
         var array = memory.Span;
-        ref var rStart = ref array.DangerousGetReferenceAt(0);
-        ref var rEnd = ref array.DangerousGetReferenceAt(array.Length - 1);
+        ref var rStart = ref MemoryMarshal.GetReference(array);
+        ref var rEnd = ref Unsafe.Add(ref rStart, array.Length - 1);
         while (Unsafe.IsAddressLessThan(ref rStart, ref rEnd))
         {
             AppendHexChars(writer, rStart);
             writer.Write(' ');
-            rStart = ref Unsafe.Add(ref rStart, 1);
+            rStart = ref Unsafe.Add(ref rStart, 1u);
         }
         AppendHexChars(writer, rStart);
 
@@ -323,14 +310,14 @@ public static class SmlWriter
         static char GetHexChar(int i) => (i < 10) ? (char)(i + 0x30) : (char)(i - 10 + 0x41);
     }
 
-#if NET6_0
+#if NET
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void WriteSpanFormattableValue<T>(this TextWriter writer, T value) where T : unmanaged, ISpanFormattable
     {
         using var spanOwner = SpanOwner<char>.Allocate(128);
         if (value.TryFormat(spanOwner.Span, out var writtenCount, default, CultureInfo.InvariantCulture))
         {
-            writer.Write(spanOwner.Span.Slice(0, writtenCount));
+            writer.Write(spanOwner.Span[..writtenCount]);
         }
         else
         {
